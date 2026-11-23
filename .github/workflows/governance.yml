@@ -1,0 +1,17 @@
+
+name: Developer Technology Governance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  governance:
+    uses: nvr-4km4l/technology-governance/.github/workflows/reusable-governance.yml@main
+    with:
+      project_path: '.'
+      project_type: 'frontend'
