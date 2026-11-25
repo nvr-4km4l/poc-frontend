@@ -1,0 +1,152 @@
+name: Dependabot Issue Sync
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: '15 1 * * *'
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  vulnerability-alerts: read
+
+concurrency:
+  group: dependabot-issue-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-dependabot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync Dependabot findings
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Invoke-GitHubApi {
+              param([string]$Endpoint)
+
+              $result = gh api $Endpoint --paginate --slurp
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw "GitHub API request failed."
+              }
+
+              $pages = ConvertFrom-Json `
+                  -InputObject ($result -join "`n") `
+                  -AsHashtable -NoEnumerate
+
+              foreach ($page in $pages) {
+                  foreach ($item in $page) {
+                      $item
+                  }
+              }
+          }
+
+          Write-Host "Repository: $env:REPOSITORY"
+
+          # Retrieve vulnerability alerts
+          $alerts = @(
+              Invoke-GitHubApi `
+                "repos/$env:REPOSITORY/dependabot/alerts?state=open&per_page=100"
+          )
+
+          # Retrieve open Pull Requests
+          $pullRequests = @(
+              Invoke-GitHubApi `
+                "repos/$env:REPOSITORY/pulls?state=open&per_page=100"
+          )
+
+          $dependabotPRs = @(
+              $pullRequests | Where-Object {
+                  $_.user.login -eq "dependabot[bot]"
+              }
+          )
+
+          # Retrieve existing issues
+          $issues = @(
+              Invoke-GitHubApi `
+                "repos/$env:REPOSITORY/issues?state=all&per_page=100"
+          )
+
+          $created = 0
+          $skipped = 0
+
+          foreach ($pr in $dependabotPRs) {
+
+              $marker = "<!-- dependabot-pr:$($pr.number) -->"
+
+              $existing = @(
+                  $issues | Where-Object {
+                      -not $_.pull_request -and
+                      ([string]$_.body).Contains($marker)
+                  }
+              )
+
+              if ($existing.Count -gt 0) {
+                  Write-Host "Issue already exists for PR #$($pr.number)"
+                  $skipped++
+                  continue
+              }
+
+              $title = "[Dependabot] $($pr.title)"
+
+              $body = @"
+          $marker
+
+          ## Dependency Update Detected
+
+          Source: Dependabot
+
+          A dependency update is available.
+
+          Pull Request: $($pr.html_url)
+
+          ## Required Action
+
+          - Review the proposed update.
+          - Perform compatibility testing.
+          - Approve the update when appropriate.
+          "@
+
+              gh issue create `
+                  --repo $env:REPOSITORY `
+                  --title $title `
+                  --body $body
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Issue creation failed."
+              }
+
+              $created++
+          }
+
+          # Generate execution summary
+          $summary = @"
+          # Dependabot Governance Report
+
+          | Metric | Result |
+          |---|---:|
+          | Open vulnerability alerts | $($alerts.Count) |
+          | Open Dependabot PRs | $($dependabotPRs.Count) |
+          | Issues created | $created |
+          | Duplicate issues skipped | $skipped |
+
+          "@
+
+          $summary | Out-File `
+              -FilePath $env:GITHUB_STEP_SUMMARY `
+              -Append -Encoding utf8
+
+          Write-Host "Open alerts: $($alerts.Count)"
+          Write-Host "Dependabot PRs: $($dependabotPRs.Count)"
+          Write-Host "Issues created: $created"
+          Write-Host "Duplicates skipped: $skipped"
+          Write-Host "Dependabot issue sync completed."
