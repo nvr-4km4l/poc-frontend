@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   governance:
-    uses: nvr-4km4l/technology-governance/.github/workflows/reusable-governance.yml@c61c0fd8d5f7ff48c5e8db42ffb1daa6794bfcf9
+    uses: nvr-4km4l/technology-governance/.github/workflows/reusable-governance.yml@5f84703ae2cb570691bd890cfb426f00acc79c46
     with:
       project_path: '.'
       project_type: 'frontend'
